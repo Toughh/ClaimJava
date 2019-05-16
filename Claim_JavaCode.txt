@@ -1,0 +1,1055 @@
+package TestScripts.Aetna_Strategical;
+
+import java.io.File;
+import java.lang.reflect.Method;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import javax.swing.JOptionPane;
+import org.testng.Assert;
+import org.testng.ITestResult;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+import com.relevantcodes.extentreports.LogStatus;
+import AWS.S3BucketDownloadFile;
+import AetnaAPI.POSTRequest;
+import JDBC.DatabaseSelect;
+import JDBC.NextGenDBQuery;
+import SFTP.SFTPUploadFile;
+import Utils.FileConversion;
+import Utils.GetUpdateTestData;
+import Utils.JsonParser;
+import Utils.ReadDatafromS3Files;
+import Utils.TestDataCreation;
+import TestScripts.BaseScript;
+
+
+public class Lite835 extends BaseScript {
+
+       HashMap<String, String> ClaimGUID;
+       HashMap<String, String> paymentToken1;
+       HashMap<String, String> paymentRequest1;
+       HashMap<String, String> F1;
+       HashMap<String, String> Lite835_EPXSettle;
+       HashMap<String, String> EPXDatabase1;
+       HashMap<String, String> EPXDatabase2;
+       HashMap<String, String> jobScheduler1;
+       HashMap<String, String> jobScheduler2;
+
+       File ZippedF1, UnzippedF1, originalSettleFile, updatedSettleFile, originalReturnFile, updatedReturnFile,
+                     originalExceptionFile, updatedExceptionFile, Unzipped835Lite, Zipped835Lite, UnzippedF4, ExistingF5File, F5File, ZippedF8, UnzippedF8, UnzippedF11;
+
+       String GuidQuery, transactionIdentifier1, paymentExecutionId, paymentStatus, transactionId, Claim;
+
+       BaseScript script = new BaseScript();
+       NextGenDBQuery query = new NextGenDBQuery();
+       POSTRequest postRequest = new POSTRequest();
+       DatabaseSelect databaseSelect1 = new DatabaseSelect();
+
+       
+       @Test
+       public void PNGS_835Lite_Verify_Status_changes_to_20_after_running_F4_for_Successful_Settlement_Transaction() {
+
+              setUP();
+
+              String currentDir = System.getProperty("user.dir");
+
+              File testData = new File(currentDir + "\\TestData\\Aetna_Strategical\\epxSettlement.xlsx");
+              TestDataCreation.createAetnaAPITestData(testData, 2);
+              TestDataCreation.createAetnaAPITestData(testData, 3);
+              TestDataCreation.createAetnaAPITestData(testData, 4);
+
+              /*
+              * Read Test Data from excel sheet
+              */
+                           paymentToken1 = GetUpdateTestData.GetTestDatafromExcel(testData, 2, "PNGS-1677");
+                           paymentRequest1 = GetUpdateTestData.GetTestDatafromExcel(testData, 3, "PNGS-1677");
+                           jobScheduler1 = GetUpdateTestData.GetTestDatafromExcel(testData, 4, "PNGS-1677");
+                           jobScheduler2 = GetUpdateTestData.GetTestDatafromExcel(testData, 4, "PNGS-1678");
+
+                           POSTRequest postRequest = new POSTRequest();
+
+                           /*
+                           * Asking user to enter Claim Number to make a payment
+                           * Fetching all guids from database corresponding to Claim entered by user
+                           */
+                           String Claim = JOptionPane.showInputDialog("Please enter Claim number to make a payment: ");
+                           System.out.println("Claim Number Entered: "+Claim);
+                           
+                           String StatusChange = JOptionPane.showInputDialog("a) Just Make a Claim Payment (Status = 10)\n"
+                           		+ "b) Run till F1 (Status = 11)\n"
+                           		+ "c) Run till EPX Settlement (Status = 13)\n"
+                           		+ "d) Run till F4 (Status = 20)\n"
+                           		+ "e) Run till F5 (Status = 25)\n"
+                           		+ "f) Disburse (Status = 31)\n"
+                           		+ "g) Deposited (Status = 40)\n"
+                           		+ "h) Rejected (Status = 123)\n\n"
+                           		+ "Please enter one option (a or b or c or d or e or f or g or h): \n");
+                           System.out.println("Processing Claim till option: "+StatusChange);
+                           
+                           String claimGuid = query.ClaimGuid() + " where nucleusdb.transaction_claim.claim_number = '"
+                                         + Claim +"';";
+                           DatabaseSelect databaseSelect1 = new DatabaseSelect();
+                           EPXDatabase2 = databaseSelect1.selectValueFromDB(claimGuid);
+                           String tranClaim = EPXDatabase2.get("transaction_claim_guid");
+                           
+                           //String ClaimGUID11 = "71afbfef-0869-45da-9a50-c30c888b2f6f";
+
+                           String Guids1 = query.DBGuidsQuery() + " where nucleusdb.transaction_claim.transaction_claim_guid = '"
+                                         + tranClaim +"' and nucleusdb.transaction_data.transaction_code_id = 10;";
+                           
+
+                           //DatabaseSelect databaseSelect1 = new DatabaseSelect();
+                           EPXDatabase1 = databaseSelect1.selectValueFromDB(Guids1);
+                           System.out.println("Processing Payment for Claim: "+Claim);
+
+              /*
+              * Generating token from paymentToken
+              */
+              System.out.println("Generating Token for Payment ");
+              sleep(2000);
+              String response1 = postRequest.sendPostRequest(API_EndPoint_PCI + API_paymentToken, API_Headers, paymentToken1.get("payload").replace(paymentToken1.get("customerGuid"), EPXDatabase1.get("patientCustomerGuid")));
+              sleep(2000);
+
+              /*
+              * Making payment through paymentRequest
+              */
+              System.out.println("Making Payment for Claim from Payment Request ");
+              String paymentRequestPayload1 = paymentRequest1.get("payload")
+                           .replace(paymentRequest1.get("token"), JsonParser.getJsonValue(response1, "token"))
+                           .replace(paymentRequest1.get("submitterCustomerGuid"), EPXDatabase1.get("patientCustomerGuid"))
+                           .replace(paymentRequest1.get("receiverCustomerGuid"), EPXDatabase1.get("providerCustomerGuid"))
+                           .replace(paymentRequest1.get("obligationGuid"), EPXDatabase1.get("obligationGuid"));
+              response1 = postRequest.sendPostRequest(API_EndPoint + API_paymentRequest, API_Headers, paymentRequestPayload1);
+              String receiptId1 = JsonParser.getJsonValue(response1, "receiptId");
+              sleep(3000);
+
+              /*
+              * Fetching external Transaction Identifier from DB
+              */
+              String transactionIdentifier1 = query.DBTransactionIdentifierQuery() + " where pd.payment_id =" + receiptId1
+                           + " and pd.payment_amount > 0 and pe.disbursement_flag = 0";
+
+              String transactionIdentifier2 = query.DBTransactionIdentifierQuery() + " where pd.payment_id =" + receiptId1
+                      + " and pd.payment_amount > 0 and pe.disbursement_flag = 1";
+              
+              if(StatusChange.contentEquals("a"))
+              {
+                     EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                     String paymentExecutionId = EPXDatabase1.get("payment_execution_id");
+                     String paymentStatus = EPXDatabase1.get("payment_status_id");
+                     String transactionId = EPXDatabase1.get("external_transaction_id");
+                     System.out.println("Payment Details =");
+                     System.out.println("Payment Execution Id :- " + paymentExecutionId + "\nTransaction Id :- " + transactionId
+                                  + "\nPaymnet Status :- " + paymentStatus);
+                     JOptionPane.showMessageDialog(null, "Claim Number Entered: "+Claim+System.lineSeparator()+"External Transaction Identifier: "+transactionId+System.lineSeparator()+"Payment Status: "+paymentStatus);
+              }
+              
+              else if(StatusChange.contentEquals("b"))
+              {
+                     /*
+                     * Run F1
+                     */
+                     System.out.println("Running F1");
+                     postRequest.sendPostRequest(API_EndPoint + API_F1, API_Headers, null);
+                     sleep(5000);
+                     
+                     /*Download latest F1 file from AWS s3 bucket to our local directory*/
+                     
+                     S3BucketDownloadFile s3BucketDownloadFile = new S3BucketDownloadFile();
+                     ZippedF1 = s3BucketDownloadFile.downloadLatestF1fromS3();
+                     
+                     EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                     String paymentExecutionId = EPXDatabase1.get("payment_execution_id");
+                     String paymentStatus = EPXDatabase1.get("payment_status_id");
+                     String transactionId = EPXDatabase1.get("external_transaction_id");
+                     System.out.println("Payment Details =");
+                     System.out.println("Payment Execution Id :- " + paymentExecutionId + "\nTransaction Id :- " + transactionId
+                             + "\nPaymnet Status :- " + paymentStatus);
+                     
+                     JOptionPane.showMessageDialog(null, "Claim Number Entered: "+Claim+System.lineSeparator()+"External Transaction Identifier: "+transactionId+System.lineSeparator()+"Payment Status: "+paymentStatus);
+              
+              }
+              
+              else if(StatusChange.contentEquals("c"))
+              {
+                     /*
+                     * Run F1
+                     */
+                     System.out.println("Running F1");
+                     postRequest.sendPostRequest(API_EndPoint + API_F1, API_Headers, null);
+                     sleep(5000);
+                     
+                     /*Download latest F1 file from AWS s3 bucket to our local directory*/
+                     
+                     S3BucketDownloadFile s3BucketDownloadFile = new S3BucketDownloadFile();
+                     ZippedF1 = s3BucketDownloadFile.downloadLatestF1fromS3();
+                     
+                     /* Upload 
+                      * EPX Settle file
+                     */
+                     
+
+                     try {
+
+                           sleep(5000);
+                           File destinationFile = FileConversion.createEPXReturnFile(EPXDatabase1.get("external_transaction_id"));
+                           sleep(5000);
+                           SFTPUploadFile ACHEPXSettle = new SFTPUploadFile();
+                           ACHEPXSettle.uploadEPXFile(destinationFile);
+                           sleep(5000);
+                     }
+
+                     catch (Exception e) {
+                           e.printStackTrace();
+                     }
+
+                     
+                     /* Run 
+                       * EPX Settlement API
+                       */
+
+                     System.out.println("Running EPX Settlement ");
+                     response1 = postRequest.sendPostRequest(API_EndPoint + API_epxSettlement, API_Headers, null);
+                     sleep(5000);
+
+                     //EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                     String paymentExecutionId1 = EPXDatabase1.get("payment_execution_id");
+                     String paymentStatus1 = EPXDatabase1.get("payment_status_id");
+                     String transactionId1 = EPXDatabase1.get("external_transaction_id");
+                     System.out.println("Payment Details =");
+                     System.out.println("Payment Execution Id :- " + paymentExecutionId1 + "\nTransaction Id :- " + transactionId1
+                             + "\nPaymnet Status :- " + paymentStatus1);
+
+                     Assert.assertEquals("13", paymentStatus, "Transacion Id " + transactionId + " Settled from 11");
+                     JOptionPane.showMessageDialog(null, "Claim Number Entered: "+Claim+System.lineSeparator()+"External Transaction Identifier: "+transactionId+System.lineSeparator()+"Payment Status: "+paymentStatus);
+              }
+              
+              else if(StatusChange.contentEquals("d"))
+              {
+                     /*
+                     * Run F1
+                     */
+                     System.out.println("Running F1");
+                     postRequest.sendPostRequest(API_EndPoint + API_F1, API_Headers, null);
+                     sleep(5000);
+
+                     EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                     String paymentExecutionId = EPXDatabase1.get("payment_execution_id");
+                     String paymentStatus = EPXDatabase1.get("payment_status_id");
+                     String transactionId = EPXDatabase1.get("external_transaction_id");
+                     System.out.println("Payment Details after Running F1 =");
+                     System.out.println("Payment Execution Id :- " + paymentExecutionId + "\nTransaction Id :- " + transactionId
+                                  + "\nPaymnet Status :- " + paymentStatus);
+
+                     /*
+                     * Download latest F1 file from AWS s3 bucket to our local directory
+                     */
+                     S3BucketDownloadFile s3BucketDownloadFile = new S3BucketDownloadFile();
+                     UnzippedF1 = s3BucketDownloadFile.downloadLatestF1fromS3();
+
+                     System.out.println("F1 Data : " + ReadDatafromS3Files.readDatafromF1(UnzippedF1, null, transactionId));
+
+                     HashMap<String, String> transactionID1 = new HashMap<>();
+                     transactionID1.put(transactionId, "CLR");
+                     System.out.println(transactionID1);
+
+                     UnzippedF4 = FileConversion.convertF1toF4(UnzippedF1, transactionID1);
+
+                     System.out.println("F4 Data : " + ReadDatafromS3Files.readDatafromF4(UnzippedF4, null, transactionId));
+
+                     /*
+                     * Upload EPX Settle file
+                     */
+
+                     DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+                     LocalDateTime now = LocalDateTime.now();
+
+                     try {
+
+                           sleep(5000);
+                           File destinationFile = FileConversion.createEPXSettlementFile(EPXDatabase1.get("external_transaction_id"));
+                           sleep(5000);
+                           SFTPUploadFile ACHEPXSettle = new SFTPUploadFile();
+                           ACHEPXSettle.uploadEPXFile(destinationFile);
+                           sleep(5000);
+                     }
+
+                     catch (Exception e) {
+                           e.printStackTrace();
+                     }
+
+                     /*
+                     * Run EPX Settlement API
+                     */
+
+                     System.out.println("Running EPX Settlement ");
+                     response1 = postRequest.sendPostRequest(API_EndPoint + API_epxSettlement, API_Headers, null);
+                     sleep(5000);
+
+                     EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                     String paymentExecutionId2 = EPXDatabase1.get("payment_execution_id");
+                     String paymentStatus2 = EPXDatabase1.get("payment_status_id");
+                     String transactionId2 = EPXDatabase1.get("external_transaction_id");
+                     System.out.println("Payment Details after Running EPX Settlement =");
+                     System.out.println("Payment Execution Id :- " + paymentExecutionId2 + "\nTransaction Id :- " + transactionId2
+                                  + "\nPaymnet Status :- " + paymentStatus2);
+
+                     /*
+                     * Run Job Scheduler manually in order to see the EPX
+                     * settlement/Return/Exception transaction for the same day
+                     */
+                     System.out.println("Running Scheduler Job for EPX ");
+                     sleep(5000);
+                     POSTRequest jobRunpostRequestEPX = new POSTRequest();
+                     String response4 = jobRunpostRequestEPX.sendJobRunPostRequest(API_Scheduler_EndPoint + API_jobScheduler,
+                                  API_Scheduler_Headers, jobScheduler1.get("payload"));
+
+                     /*
+                     * Run Job Scheduler manually in order to see the 835 lite for EPX
+                     * settlement/Return/Exception transaction for the same day
+                     */
+                     System.out.println("Running Scheduler Job for 835Lite");
+                     POSTRequest jobRunpostRequest835Lite = new POSTRequest();
+                     String response5 = jobRunpostRequest835Lite.sendJobRunPostRequest(API_Scheduler_EndPoint + API_jobScheduler,
+                                  API_Scheduler_Headers, jobScheduler2.get("payload"));
+
+                     /*
+                     * Run 835 lite
+                     */
+                     System.out.println("Running 835Lite API");
+                     sleep(5000);
+                     String Payload835 = "{ \"settleDate\": \"" + dtf.format(now) + "\" }";
+                     System.out.println("Date passed to see Transaction: " + Payload835);
+                     response1 = postRequest.sendPostRequest(API_EndPoint + API_835Lite, API_Headers, Payload835);
+
+                     /*
+                     * Download latest 835Lite file from AWS s3 bucket to our local directory
+                     */
+                     s3BucketDownloadFile = new S3BucketDownloadFile();
+                     Zipped835Lite = s3BucketDownloadFile.downloadLatest835LitefromS3();
+
+                     /*
+                     * Reading latest 835file
+                     */
+
+                     try {
+                           System.out.println("Reading 835Lite file Content");
+                           sleep(5000);
+                           Lite835_EPXSettle = ReadDatafromS3Files.filter835File(EPXDatabase1.get("external_transaction_id"),
+                                         Zipped835Lite);
+
+                     }
+
+                     catch (Exception e) {
+                           System.out.println("Exception");
+                     }
+                
+
+                     /*
+                     * Zip F4 file and upload it to SFTP in /from_cass_test folder
+                     */
+                     SFTPUploadFile sftpUploadFileToQA = new SFTPUploadFile();
+                     sftpUploadFileToQA.uploadF4File(UnzippedF4);
+                     sleep(5000);
+
+                     /*
+                     * Run F4 API to transfer F4 File from SFTP to S3 bucket and complete drawdown
+                     * settlement process
+                     */
+
+                     System.out.println("Running F4 ");
+                     postRequest.sendPostRequest(API_EndPoint + API_F4, API_Headers, null);
+
+                     sleep(5000);
+
+                     EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                     String paymentExecutionId4 = EPXDatabase1.get("payment_execution_id");
+                     String paymentStatus4 = EPXDatabase1.get("payment_status_id");
+                     String transactionId4 = EPXDatabase1.get("external_transaction_id");
+                     System.out.println("Payment Details after Running F4 =");
+                     System.out.println("Payment Execution Id :- " + paymentExecutionId4 + "\nTransaction Id :- " + transactionId4
+                                  + "\nPaymnet Status :- " + paymentStatus4);
+
+                     Assert.assertEquals("20", paymentStatus4, "Transacion Id " + transactionId4 + " Cleared to 20 from 13");
+                     JOptionPane.showMessageDialog(null, "Claim Number Entered: "+Claim+System.lineSeparator()+"External Transaction Identifier: "+transactionId4+System.lineSeparator()+"Payment Status: "+paymentStatus4);
+
+              }
+              
+              else if(StatusChange.contentEquals("e"))
+              {
+            	  /*
+                   * Run F1
+                   */
+                   System.out.println("Running F1");
+                   postRequest.sendPostRequest(API_EndPoint + API_F1, API_Headers, null);
+                   sleep(5000);
+
+                   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                   String paymentExecutionId = EPXDatabase1.get("payment_execution_id");
+                   String paymentStatus = EPXDatabase1.get("payment_status_id");
+                   String transactionId = EPXDatabase1.get("external_transaction_id");
+                   System.out.println("Payment Details after Running F1 =");
+                   System.out.println("Payment Execution Id :- " + paymentExecutionId + "\nTransaction Id :- " + transactionId
+                                + "\nPaymnet Status :- " + paymentStatus);
+
+                   /*
+                   * Download latest F1 file from AWS s3 bucket to our local directory
+                   */
+                   S3BucketDownloadFile s3BucketDownloadFile = new S3BucketDownloadFile();
+                   UnzippedF1 = s3BucketDownloadFile.downloadLatestF1fromS3();
+
+                   System.out.println("F1 Data : " + ReadDatafromS3Files.readDatafromF1(UnzippedF1, null, transactionId));
+
+                   HashMap<String, String> transactionID1 = new HashMap<>();
+                   transactionID1.put(transactionId, "CLR");
+                   System.out.println(transactionID1);
+
+                   UnzippedF4 = FileConversion.convertF1toF4(UnzippedF1, transactionID1);
+
+                   System.out.println("F4 Data : " + ReadDatafromS3Files.readDatafromF4(UnzippedF4, null, transactionId));
+
+                   /*
+                   * Upload EPX Settle file
+                   */
+
+                   DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+                   LocalDateTime now = LocalDateTime.now();
+
+                   try {
+
+                         sleep(5000);
+                         File destinationFile = FileConversion.createEPXSettlementFile(EPXDatabase1.get("external_transaction_id"));
+                         sleep(5000);
+                         SFTPUploadFile ACHEPXSettle = new SFTPUploadFile();
+                         ACHEPXSettle.uploadEPXFile(destinationFile);
+                         sleep(5000);
+                   }
+
+                   catch (Exception e) {
+                         e.printStackTrace();
+                   }
+
+                   /*
+                   * Run EPX Settlement API
+                   */
+
+                   System.out.println("Running EPX Settlement ");
+                   response1 = postRequest.sendPostRequest(API_EndPoint + API_epxSettlement, API_Headers, null);
+                   sleep(5000);
+
+                   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                   String paymentExecutionId2 = EPXDatabase1.get("payment_execution_id");
+                   String paymentStatus2 = EPXDatabase1.get("payment_status_id");
+                   String transactionId2 = EPXDatabase1.get("external_transaction_id");
+                   System.out.println("Payment Details after Running EPX Settlement =");
+                   System.out.println("Payment Execution Id :- " + paymentExecutionId2 + "\nTransaction Id :- " + transactionId2
+                                + "\nPaymnet Status :- " + paymentStatus2);
+
+                   /*
+                   * Run Job Scheduler manually in order to see the EPX
+                   * settlement/Return/Exception transaction for the same day
+                   */
+                   System.out.println("Running Scheduler Job for EPX ");
+                   sleep(5000);
+                   POSTRequest jobRunpostRequestEPX = new POSTRequest();
+                   String response4 = jobRunpostRequestEPX.sendJobRunPostRequest(API_Scheduler_EndPoint + API_jobScheduler,
+                                API_Scheduler_Headers, jobScheduler1.get("payload"));
+
+                   /*
+                   * Run Job Scheduler manually in order to see the 835 lite for EPX
+                   * settlement/Return/Exception transaction for the same day
+                   */
+                   System.out.println("Running Scheduler Job for 835Lite");
+                   POSTRequest jobRunpostRequest835Lite = new POSTRequest();
+                   String response5 = jobRunpostRequest835Lite.sendJobRunPostRequest(API_Scheduler_EndPoint + API_jobScheduler,
+                                API_Scheduler_Headers, jobScheduler2.get("payload"));
+
+                   /*
+                   * Run 835 lite
+                   */
+                   System.out.println("Running 835Lite API");
+                   sleep(5000);
+                   String Payload835 = "{ \"settleDate\": \"" + dtf.format(now) + "\" }";
+                   System.out.println("Date passed to see Transaction: " + Payload835);
+                   response1 = postRequest.sendPostRequest(API_EndPoint + API_835Lite, API_Headers, Payload835);
+
+                   /*
+                   * Download latest 835Lite file from AWS s3 bucket to our local directory
+                   */
+                   s3BucketDownloadFile = new S3BucketDownloadFile();
+                   Zipped835Lite = s3BucketDownloadFile.downloadLatest835LitefromS3();
+
+                   /*
+                   * Reading latest 835file
+                   */
+
+                   try {
+                         System.out.println("Reading 835Lite file Content");
+                         sleep(5000);
+                         Lite835_EPXSettle = ReadDatafromS3Files.filter835File(EPXDatabase1.get("external_transaction_id"),
+                                       Zipped835Lite);
+
+                   }
+
+                   catch (Exception e) {
+                         System.out.println("Exception");
+                   }
+              
+
+                   /*
+                   * Zip F4 file and upload it to SFTP in /from_cass_test folder
+                   */
+                   SFTPUploadFile sftpUploadFileToQA = new SFTPUploadFile();
+                   sftpUploadFileToQA.uploadF4File(UnzippedF4);
+                   sleep(5000);
+
+                   /*
+                   * Run F4 API to transfer F4 File from SFTP to S3 bucket and complete drawdown
+                   * settlement process
+                   */
+
+                   System.out.println("Running F4 ");
+                   postRequest.sendPostRequest(API_EndPoint + API_F4, API_Headers, null);
+
+                   sleep(5000);
+
+                   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                   String paymentExecutionId4 = EPXDatabase1.get("payment_execution_id");
+                   String paymentStatus4 = EPXDatabase1.get("payment_status_id");
+                   String transactionId4 = EPXDatabase1.get("external_transaction_id");
+                   System.out.println("Payment Details after Running F4 =");
+                   System.out.println("Payment Execution Id :- " + paymentExecutionId4 + "\nTransaction Id :- " + transactionId4
+                                + "\nPaymnet Status :- " + paymentStatus4);
+                   
+                   postRequest.sendPostRequest(API_EndPoint + API_StartDisbursement, API_Headers, null);
+       			   sleep(200000);
+
+       			   ExistingF5File = s3BucketDownloadFile.downloadExistingF5fromS3();
+       			   postRequest.sendPostRequest(API_EndPoint + API_F5, API_Headers, null);
+       			   sleep(7000);
+       			   F5File = s3BucketDownloadFile.downloadLatestF5fromS3();
+       			   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier2);
+	                String paymentExecutionId5 = EPXDatabase1.get("payment_execution_id");
+	                String paymentStatus5 = EPXDatabase1.get("payment_status_id");
+	                String transactionId5 = EPXDatabase1.get("external_transaction_id");
+	                System.out.println("Payment Details after Running F5 =");
+	                System.out.println("Payment Execution Id :- " + paymentExecutionId5 + "\nTransaction Id :- " + transactionId5
+	                             + "\nPaymnet Status :- " + paymentStatus5);
+
+                   Assert.assertEquals("25", paymentStatus5, "Transacion Id " + transactionId5 + " Cleared to 25 from 20");
+                   JOptionPane.showMessageDialog(null, "Claim Number Entered: "+Claim+System.lineSeparator()+"External Transaction Identifier: "+transactionId5+System.lineSeparator()+"Payment Status: "+paymentStatus5);
+
+              }
+              
+              else if(StatusChange.contentEquals("f"))
+              {
+            	  /*
+                   * Run F1
+                   */
+                   System.out.println("Running F1");
+                   postRequest.sendPostRequest(API_EndPoint + API_F1, API_Headers, null);
+                   sleep(5000);
+
+                   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                   String paymentExecutionId = EPXDatabase1.get("payment_execution_id");
+                   String paymentStatus = EPXDatabase1.get("payment_status_id");
+                   String transactionId = EPXDatabase1.get("external_transaction_id");
+                   System.out.println("Payment Details after Running F1 =");
+                   System.out.println("Payment Execution Id :- " + paymentExecutionId + "\nTransaction Id :- " + transactionId
+                                + "\nPaymnet Status :- " + paymentStatus);
+
+                   /*
+                   * Download latest F1 file from AWS s3 bucket to our local directory
+                   */
+                   S3BucketDownloadFile s3BucketDownloadFile = new S3BucketDownloadFile();
+                   UnzippedF1 = s3BucketDownloadFile.downloadLatestF1fromS3();
+
+                   System.out.println("F1 Data : " + ReadDatafromS3Files.readDatafromF1(UnzippedF1, null, transactionId));
+
+                   HashMap<String, String> transactionID1 = new HashMap<>();
+                   transactionID1.put(transactionId, "CLR");
+                   System.out.println(transactionID1);
+
+                   UnzippedF4 = FileConversion.convertF1toF4(UnzippedF1, transactionID1);
+
+                   System.out.println("F4 Data : " + ReadDatafromS3Files.readDatafromF4(UnzippedF4, null, transactionId));
+
+                   /*
+                   * Upload EPX Settle file
+                   */
+
+                   DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+                   LocalDateTime now = LocalDateTime.now();
+
+                   try {
+
+                         sleep(5000);
+                         File destinationFile = FileConversion.createEPXSettlementFile(EPXDatabase1.get("external_transaction_id"));
+                         sleep(5000);
+                         SFTPUploadFile ACHEPXSettle = new SFTPUploadFile();
+                         ACHEPXSettle.uploadEPXFile(destinationFile);
+                         sleep(5000);
+                   }
+
+                   catch (Exception e) {
+                         e.printStackTrace();
+                   }
+
+                   /*
+                   * Run EPX Settlement API
+                   */
+
+                   System.out.println("Running EPX Settlement ");
+                   response1 = postRequest.sendPostRequest(API_EndPoint + API_epxSettlement, API_Headers, null);
+                   sleep(5000);
+
+                   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                   String paymentExecutionId2 = EPXDatabase1.get("payment_execution_id");
+                   String paymentStatus2 = EPXDatabase1.get("payment_status_id");
+                   String transactionId2 = EPXDatabase1.get("external_transaction_id");
+                   System.out.println("Payment Details after Running EPX Settlement =");
+                   System.out.println("Payment Execution Id :- " + paymentExecutionId2 + "\nTransaction Id :- " + transactionId2
+                                + "\nPaymnet Status :- " + paymentStatus2);
+
+                   /*
+                   * Run Job Scheduler manually in order to see the EPX
+                   * settlement/Return/Exception transaction for the same day
+                   */
+                   System.out.println("Running Scheduler Job for EPX ");
+                   sleep(5000);
+                   POSTRequest jobRunpostRequestEPX = new POSTRequest();
+                   String response4 = jobRunpostRequestEPX.sendJobRunPostRequest(API_Scheduler_EndPoint + API_jobScheduler,
+                                API_Scheduler_Headers, jobScheduler1.get("payload"));
+
+                   /*
+                   * Run Job Scheduler manually in order to see the 835 lite for EPX
+                   * settlement/Return/Exception transaction for the same day
+                   */
+                   System.out.println("Running Scheduler Job for 835Lite");
+                   POSTRequest jobRunpostRequest835Lite = new POSTRequest();
+                   String response5 = jobRunpostRequest835Lite.sendJobRunPostRequest(API_Scheduler_EndPoint + API_jobScheduler,
+                                API_Scheduler_Headers, jobScheduler2.get("payload"));
+
+                   /*
+                   * Run 835 lite
+                   */
+                   System.out.println("Running 835Lite API");
+                   sleep(5000);
+                   String Payload835 = "{ \"settleDate\": \"" + dtf.format(now) + "\" }";
+                   System.out.println("Date passed to see Transaction: " + Payload835);
+                   response1 = postRequest.sendPostRequest(API_EndPoint + API_835Lite, API_Headers, Payload835);
+
+                   /*
+                   * Download latest 835Lite file from AWS s3 bucket to our local directory
+                   */
+                   s3BucketDownloadFile = new S3BucketDownloadFile();
+                   Zipped835Lite = s3BucketDownloadFile.downloadLatest835LitefromS3();
+
+                   /*
+                   * Reading latest 835file
+                   */
+
+                   try {
+                         System.out.println("Reading 835Lite file Content");
+                         sleep(5000);
+                         Lite835_EPXSettle = ReadDatafromS3Files.filter835File(EPXDatabase1.get("external_transaction_id"),
+                                       Zipped835Lite);
+
+                   }
+
+                   catch (Exception e) {
+                         System.out.println("Exception");
+                   }
+              
+
+                   /*
+                   * Zip F4 file and upload it to SFTP in /from_cass_test folder
+                   */
+                   SFTPUploadFile sftpUploadFileToQA = new SFTPUploadFile();
+                   sftpUploadFileToQA.uploadF4File(UnzippedF4);
+                   sleep(5000);
+
+                   /*
+                   * Run F4 API to transfer F4 File from SFTP to S3 bucket and complete drawdown
+                   * settlement process
+                   */
+
+                   System.out.println("Running F4 ");
+                   postRequest.sendPostRequest(API_EndPoint + API_F4, API_Headers, null);
+
+                   sleep(5000);
+
+                   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                   String paymentExecutionId4 = EPXDatabase1.get("payment_execution_id");
+                   String paymentStatus4 = EPXDatabase1.get("payment_status_id");
+                   String transactionId4 = EPXDatabase1.get("external_transaction_id");
+                   System.out.println("Payment Details after Running F4 =");
+                   System.out.println("Payment Execution Id :- " + paymentExecutionId4 + "\nTransaction Id :- " + transactionId4
+                                + "\nPaymnet Status :- " + paymentStatus4);
+                   
+                   postRequest.sendPostRequest(API_EndPoint + API_StartDisbursement, API_Headers, null);
+       			   sleep(200000);
+
+       			   ExistingF5File = s3BucketDownloadFile.downloadExistingF5fromS3();
+       			   postRequest.sendPostRequest(API_EndPoint + API_F5, API_Headers, null);
+       			   sleep(7000);
+       			   F5File = s3BucketDownloadFile.downloadLatestF5fromS3();
+       			   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier2);
+	                String paymentExecutionId5 = EPXDatabase1.get("payment_execution_id");
+	                String paymentStatus5 = EPXDatabase1.get("payment_status_id");
+	                String transactionId5 = EPXDatabase1.get("external_transaction_id");
+	                System.out.println("Payment Details after Running F5 =");
+	                System.out.println("Payment Execution Id :- " + paymentExecutionId5 + "\nTransaction Id :- " + transactionId5
+	                             + "\nPaymnet Status :- " + paymentStatus5);
+	                
+	                postRequest.sendPostRequest(API_EndPoint + API_F8, API_Headers, null);
+	    			sleep(5000);
+
+	    			ZippedF8 = s3BucketDownloadFile.downloadLatestF8fromS3();
+	    			UnzippedF8 = s3BucketDownloadFile.downloadLatestF8fromS3();
+	    			
+	    			EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier2);
+	                String paymentExecutionId6 = EPXDatabase1.get("payment_execution_id");
+	                String paymentStatus6 = EPXDatabase1.get("payment_status_id");
+	                String transactionId6 = EPXDatabase1.get("external_transaction_id");
+	                System.out.println("Payment Details after Running F8 =");
+	                System.out.println("Payment Execution Id :- " + paymentExecutionId6 + "\nTransaction Id :- " + transactionId6
+	                             + "\nPaymnet Status :- " + paymentStatus6);
+
+                   Assert.assertEquals("31", paymentStatus6, "Transacion Id " + transactionId6 + " Cleared to 31 from 25");
+                   JOptionPane.showMessageDialog(null, "Claim Number Entered: "+Claim+System.lineSeparator()+"External Transaction Identifier: "+transactionId6+System.lineSeparator()+"Payment Status: "+paymentStatus6);
+
+              }
+              
+            	  else if(StatusChange.contentEquals("g"))
+                  {
+                	  /*
+                       * Run F1
+                       */
+                       System.out.println("Running F1");
+                       postRequest.sendPostRequest(API_EndPoint + API_F1, API_Headers, null);
+                       sleep(5000);
+
+                       EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                       String paymentExecutionId = EPXDatabase1.get("payment_execution_id");
+                       String paymentStatus = EPXDatabase1.get("payment_status_id");
+                       String transactionId = EPXDatabase1.get("external_transaction_id");
+                       System.out.println("Payment Details after Running F1 =");
+                       System.out.println("Payment Execution Id :- " + paymentExecutionId + "\nTransaction Id :- " + transactionId
+                                    + "\nPaymnet Status :- " + paymentStatus);
+
+                       /*
+                       * Download latest F1 file from AWS s3 bucket to our local directory
+                       */
+                       S3BucketDownloadFile s3BucketDownloadFile = new S3BucketDownloadFile();
+                       UnzippedF1 = s3BucketDownloadFile.downloadLatestF1fromS3();
+
+                       System.out.println("F1 Data : " + ReadDatafromS3Files.readDatafromF1(UnzippedF1, null, transactionId));
+
+                       HashMap<String, String> transactionID1 = new HashMap<>();
+                       transactionID1.put(transactionId, "CLR");
+                       System.out.println(transactionID1);
+
+                       UnzippedF4 = FileConversion.convertF1toF4(UnzippedF1, transactionID1);
+
+                       System.out.println("F4 Data : " + ReadDatafromS3Files.readDatafromF4(UnzippedF4, null, transactionId));
+
+                       /*
+                       * Upload EPX Settle file
+                       */
+
+                       DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+                       LocalDateTime now = LocalDateTime.now();
+
+                       try {
+
+                             sleep(5000);
+                             File destinationFile = FileConversion.createEPXSettlementFile(EPXDatabase1.get("external_transaction_id"));
+                             sleep(5000);
+                             SFTPUploadFile ACHEPXSettle = new SFTPUploadFile();
+                             ACHEPXSettle.uploadEPXFile(destinationFile);
+                             sleep(5000);
+                       }
+
+                       catch (Exception e) {
+                             e.printStackTrace();
+                       }
+
+                       /*
+                       * Run EPX Settlement API
+                       */
+
+                       System.out.println("Running EPX Settlement ");
+                       response1 = postRequest.sendPostRequest(API_EndPoint + API_epxSettlement, API_Headers, null);
+                       sleep(5000);
+
+                       EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                       String paymentExecutionId2 = EPXDatabase1.get("payment_execution_id");
+                       String paymentStatus2 = EPXDatabase1.get("payment_status_id");
+                       String transactionId2 = EPXDatabase1.get("external_transaction_id");
+                       System.out.println("Payment Details after Running EPX Settlement =");
+                       System.out.println("Payment Execution Id :- " + paymentExecutionId2 + "\nTransaction Id :- " + transactionId2
+                                    + "\nPaymnet Status :- " + paymentStatus2);
+
+                       /*
+                       * Run Job Scheduler manually in order to see the EPX
+                       * settlement/Return/Exception transaction for the same day
+                       */
+                       System.out.println("Running Scheduler Job for EPX ");
+                       sleep(5000);
+                       POSTRequest jobRunpostRequestEPX = new POSTRequest();
+                       String response4 = jobRunpostRequestEPX.sendJobRunPostRequest(API_Scheduler_EndPoint + API_jobScheduler,
+                                    API_Scheduler_Headers, jobScheduler1.get("payload"));
+
+                       /*
+                       * Run Job Scheduler manually in order to see the 835 lite for EPX
+                       * settlement/Return/Exception transaction for the same day
+                       */
+                       System.out.println("Running Scheduler Job for 835Lite");
+                       POSTRequest jobRunpostRequest835Lite = new POSTRequest();
+                       String response5 = jobRunpostRequest835Lite.sendJobRunPostRequest(API_Scheduler_EndPoint + API_jobScheduler,
+                                    API_Scheduler_Headers, jobScheduler2.get("payload"));
+
+                       /*
+                       * Run 835 lite
+                       */
+                       System.out.println("Running 835Lite API");
+                       sleep(5000);
+                       String Payload835 = "{ \"settleDate\": \"" + dtf.format(now) + "\" }";
+                       System.out.println("Date passed to see Transaction: " + Payload835);
+                       response1 = postRequest.sendPostRequest(API_EndPoint + API_835Lite, API_Headers, Payload835);
+
+                       /*
+                       * Download latest 835Lite file from AWS s3 bucket to our local directory
+                       */
+                       s3BucketDownloadFile = new S3BucketDownloadFile();
+                       Zipped835Lite = s3BucketDownloadFile.downloadLatest835LitefromS3();
+
+                       /*
+                       * Reading latest 835file
+                       */
+
+                       try {
+                             System.out.println("Reading 835Lite file Content");
+                             sleep(5000);
+                             Lite835_EPXSettle = ReadDatafromS3Files.filter835File(EPXDatabase1.get("external_transaction_id"),
+                                           Zipped835Lite);
+
+                       }
+
+                       catch (Exception e) {
+                             System.out.println("Exception");
+                       }
+                  
+
+                       /*
+                       * Zip F4 file and upload it to SFTP in /from_cass_test folder
+                       */
+                       SFTPUploadFile sftpUploadFileToQA = new SFTPUploadFile();
+                       sftpUploadFileToQA.uploadF4File(UnzippedF4);
+                       sleep(5000);
+
+                       /*
+                       * Run F4 API to transfer F4 File from SFTP to S3 bucket and complete drawdown
+                       * settlement process
+                       */
+
+                       System.out.println("Running F4 ");
+                       postRequest.sendPostRequest(API_EndPoint + API_F4, API_Headers, null);
+
+                       sleep(5000);
+
+                       EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                       String paymentExecutionId4 = EPXDatabase1.get("payment_execution_id");
+                       String paymentStatus4 = EPXDatabase1.get("payment_status_id");
+                       String transactionId4 = EPXDatabase1.get("external_transaction_id");
+                       System.out.println("Payment Details after Running F4 =");
+                       System.out.println("Payment Execution Id :- " + paymentExecutionId4 + "\nTransaction Id :- " + transactionId4
+                                    + "\nPaymnet Status :- " + paymentStatus4);
+                       
+                       postRequest.sendPostRequest(API_EndPoint + API_StartDisbursement, API_Headers, null);
+           			   sleep(200000);
+
+           			   ExistingF5File = s3BucketDownloadFile.downloadExistingF5fromS3();
+           			   postRequest.sendPostRequest(API_EndPoint + API_F5, API_Headers, null);
+           			   sleep(7000);
+           			   F5File = s3BucketDownloadFile.downloadLatestF5fromS3();
+           			   EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier2);
+    	                String paymentExecutionId5 = EPXDatabase1.get("payment_execution_id");
+    	                String paymentStatus5 = EPXDatabase1.get("payment_status_id");
+    	                String transactionId5 = EPXDatabase1.get("external_transaction_id");
+    	                System.out.println("Payment Details after Running F5 =");
+    	                System.out.println("Payment Execution Id :- " + paymentExecutionId5 + "\nTransaction Id :- " + transactionId5
+    	                             + "\nPaymnet Status :- " + paymentStatus5);
+    	                
+    	                postRequest.sendPostRequest(API_EndPoint + API_F8, API_Headers, null);
+    	    			sleep(5000);
+
+    	    			ZippedF8 = s3BucketDownloadFile.downloadLatestF8fromS3();
+    	    			UnzippedF8 = s3BucketDownloadFile.downloadLatestF8fromS3();
+    	    			
+    	    			EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier2);
+    	                String paymentExecutionId6 = EPXDatabase1.get("payment_execution_id");
+    	                String paymentStatus6 = EPXDatabase1.get("payment_status_id");
+    	                String transactionId6 = EPXDatabase1.get("external_transaction_id");
+    	                System.out.println("Payment Details after Running F8 =");
+    	                System.out.println("Payment Execution Id :- " + paymentExecutionId6 + "\nTransaction Id :- " + transactionId6
+    	                             + "\nPaymnet Status :- " + paymentStatus6);
+    	                
+    	                
+    	                /*S3BucketDownloadFile s3BucketDownloadFile = new S3BucketDownloadFile();
+                        UnzippedF1 = s3BucketDownloadFile.downloadLatestF1fromS3();
+
+                        System.out.println("F1 Data : " + ReadDatafromS3Files.readDatafromF1(UnzippedF1, null, transactionId));*/
+
+                        HashMap<String, String> transactionID2 = new HashMap<>();
+                        transactionID2.put(transactionId6, "CLR");
+                        System.out.println(transactionID2);
+
+                        /*UnzippedF4 = FileConversion.convertF1toF4(UnzippedF1, transactionID1);
+
+                        System.out.println("F4 Data : " + ReadDatafromS3Files.readDatafromF4(UnzippedF4, null, transactionId));*/
+                        
+    	                
+    	                sleep(5000);
+    	    			UnzippedF11 = FileConversion.convertF8toF11(UnzippedF8, transactionID2);
+    	    			sleep(5000);
+    	    			/*
+    	    			 * Zip F11 file and upload it to SFTP in /from_cass_test folder
+    	    			 */
+    	    			sftpUploadFileToQA.uploadF11File(UnzippedF11);
+    	    			sleep(5000);
+
+    	    			postRequest.sendPostRequest(API_EndPoint + API_F11, API_Headers, null);
+    	    			sleep(5000);
+    	    			
+    	    			EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier2);
+    	                String paymentExecutionId7 = EPXDatabase1.get("payment_execution_id");
+    	                String paymentStatus7 = EPXDatabase1.get("payment_status_id");
+    	                String transactionId7 = EPXDatabase1.get("external_transaction_id");
+    	                System.out.println("Payment Details after Running F11 =");
+    	                System.out.println("Payment Execution Id :- " + paymentExecutionId7 + "\nTransaction Id :- " + transactionId7
+    	                             + "\nPaymnet Status :- " + paymentStatus7);
+
+                       Assert.assertEquals("40", paymentStatus7, "Transacion Id " + transactionId7 + " Cleared to 40 from 31");
+                       JOptionPane.showMessageDialog(null, "Claim Number Entered: "+Claim+System.lineSeparator()+"External Transaction Identifier: "+transactionId7+System.lineSeparator()+"Payment Status: "+paymentStatus7);
+
+              }
+            	  else if(StatusChange.contentEquals("h"))
+                  {
+                	  /*
+                       * Run F1
+                       */
+                       System.out.println("Running F1");
+                       postRequest.sendPostRequest(API_EndPoint + API_F1, API_Headers, null);
+                       sleep(5000);
+
+                       EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                       String paymentExecutionId = EPXDatabase1.get("payment_execution_id");
+                       String paymentStatus = EPXDatabase1.get("payment_status_id");
+                       String transactionId = EPXDatabase1.get("external_transaction_id");
+                       System.out.println("Payment Details after Running F1 =");
+                       System.out.println("Payment Execution Id :- " + paymentExecutionId + "\nTransaction Id :- " + transactionId
+                                    + "\nPaymnet Status :- " + paymentStatus);
+
+                       /*
+                       * Download latest F1 file from AWS s3 bucket to our local directory
+                       */
+                       S3BucketDownloadFile s3BucketDownloadFile = new S3BucketDownloadFile();
+                       UnzippedF1 = s3BucketDownloadFile.downloadLatestF1fromS3();
+
+                       System.out.println("F1 Data : " + ReadDatafromS3Files.readDatafromF1(UnzippedF1, null, transactionId));
+
+                       HashMap<String, String> transactionID1 = new HashMap<>();
+                       transactionID1.put(transactionId, "CLR");
+                       System.out.println(transactionID1);
+
+                       UnzippedF4 = FileConversion.convertF1toF4(UnzippedF1, transactionID1);
+
+                       System.out.println("F4 Data : " + ReadDatafromS3Files.readDatafromF4(UnzippedF4, null, transactionId));
+
+                       /*
+                       * Zip F4 file and upload it to SFTP in /from_cass_test folder
+                       */
+                       SFTPUploadFile sftpUploadFileToQA = new SFTPUploadFile();
+                       sftpUploadFileToQA.uploadF4File(UnzippedF4);
+                       sleep(5000);
+
+                       /*
+                       * Run F4 API to transfer F4 File from SFTP to S3 bucket and complete drawdown
+                       * settlement process
+                       */
+
+                       System.out.println("Running F4 ");
+                       postRequest.sendPostRequest(API_EndPoint + API_F4, API_Headers, null);
+
+                       sleep(5000);
+                       
+                       transactionID1.put(transactionId, "2PR");
+                       System.out.println(transactionID1);
+
+                       UnzippedF4 = FileConversion.convertF1toF4(UnzippedF1, transactionID1);
+
+                       System.out.println("F4 Data : " + ReadDatafromS3Files.readDatafromF4(UnzippedF4, null, transactionId));
+
+                       /*
+                       * Zip F4 file and upload it to SFTP in /from_cass_test folder
+                       */
+                       sftpUploadFileToQA.uploadF4File(UnzippedF4);
+                       sleep(5000);
+
+                       /*
+                       * Run F4 API to transfer F4 File from SFTP to S3 bucket and complete drawdown
+                       * settlement process
+                       */
+
+                       System.out.println("Running F4 ");
+                       postRequest.sendPostRequest(API_EndPoint + API_F4, API_Headers, null);
+
+                       sleep(5000);
+
+                       EPXDatabase1 = databaseSelect1.selectValueFromDB(transactionIdentifier1);
+                       String paymentExecutionId1 = EPXDatabase1.get("payment_execution_id");
+                       String paymentStatus1 = EPXDatabase1.get("payment_status_id");
+                       String transactionId1 = EPXDatabase1.get("external_transaction_id");
+                       System.out.println("Payment Details after Running F4 =");
+                       System.out.println("Payment Execution Id :- " + paymentExecutionId1 + "\nTransaction Id :- " + transactionId1
+                                    + "\nPaymnet Status :- " + paymentStatus1);
+
+                       Assert.assertEquals("122", paymentStatus1, "Transacion Id " + transactionId1 + " Cleared to 122 from 20");
+                       JOptionPane.showMessageDialog(null, "Claim Number Entered: "+Claim+System.lineSeparator()+"External Transaction Identifier: "+transactionId1+System.lineSeparator()+"Payment Status: "+paymentStatus1);
+                  }
+              else
+              {
+                     System.out.println("Not a valid status number!!!");
+                     System.exit(0);
+              }
+              }
+
+       @AfterMethod
+       public void tearDown(ITestResult result) {
+              if (result.getStatus() == ITestResult.SUCCESS) {
+
+                     logger.log(LogStatus.PASS, "Test Case Pass", "PASS");
+
+              }
+              if (result.getStatus() == ITestResult.FAILURE) {
+
+                     logger.log(LogStatus.FAIL, "Test Case Failed", "FAIL");
+                     logger.log(LogStatus.FAIL, result.getThrowable());
+              }
+              if (result.getStatus() == ITestResult.SKIP) {
+
+                     logger.log(LogStatus.SKIP, "Test Case Skipped", "SKIP");
+              }
+
+       }
+
+       @BeforeMethod
+       protected void startSession(Method method) throws Exception {
+              logger = reports.startTest(method.getName());
+       }
+
+}
