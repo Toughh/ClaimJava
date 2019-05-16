@@ -1,0 +1,39 @@
+package JDBC;
+
+public class NextGenDBQuery {
+
+	public String DBGuidsQuery()
+	{
+		String GuidQuery = "SELECT nucleusdb.transaction_claim.transaction_claim_guid, "
+				+ "nucleusdb.transaction_claim.claim_number, nucleusdb.transaction_data.transaction_data_id,"
+				+ " nucleusdb.transaction_data.transaction_case_id,nucleusdb.transaction_data.transaction_data_guid"
+				+ " as obligationGuid, nucleusdb.transaction_data.counter_customer_id as patientCustomerId,"
+				+ " c1.customer_guid as providerCustomerGuid, nucleusdb.transaction_data.customer_id as"
+				+ " providerCustomerId, c2.customer_guid as patientCustomerGuid,"
+				+ " nucleusdb.transaction_data.external_transaction_id, nucleusdb.transaction_data.transaction_amount"
+				+ " FROM nucleusdb.transaction_claim inner join nucleusdb.transaction_data ON"
+				+ " nucleusdb.transaction_data.transaction_case_id=nucleusdb.transaction_claim.transaction_case_id"
+				+ " inner join nucleusdb.transaction_case"
+				+ " ON nucleusdb.transaction_data.transaction_case_id=nucleusdb.transaction_case.transaction_case_id"
+				+ " inner join nucleusdb.customer c1 ON nucleusdb.transaction_data.counter_customer_id = c1.customer_id"
+				+ " inner join nucleusdb.customer c2 ON nucleusdb.transaction_data.customer_id = c2.customer_id ";
+		return GuidQuery;
+	}
+	
+	public String DBTransactionIdentifierQuery()
+	{
+		String TransactionIdentifierQuery = "SELECT pe.payment_execution_id, pd.payment_id, pd.payment_detail_id, td.external_transaction_id,"
+				+ " pe.payment_status_id FROM nucleusdb.payment_detail as pd join nucleusdb.transaction_data td"
+				+ " ON td.transaction_data_id = pd.transaction_data_id" + " join nucleusdb.payment_execution pe"
+				+ " ON pe.transaction_identifier = td.external_transaction_id";
+		
+				return TransactionIdentifierQuery;
+	}
+	
+	public String ClaimGuid()
+	{
+		String tranClaimGuid = "SELECT transaction_claim_guid FROM nucleusdb.transaction_claim";
+		return tranClaimGuid;
+		
+	}
+}
